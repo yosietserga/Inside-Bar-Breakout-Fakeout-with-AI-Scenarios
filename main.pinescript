@@ -1,0 +1,109 @@
+//@version=6
+indicator("Inside Bar Breakout/Fakeout with AI Scenarios [Yosiet]", overlay=true)
+
+// Input parameters
+useAlternateResolution = input.bool(true, "Use Alternate Resolution")
+resolutionMultiplier = input.int(3, "Multiplier for Alternate Resolution", minval=1)
+maType = input.string("SMA", "MA Type", options=["SMA", "EMA", "SMMA", "WMA", "VWMA"])
+maPeriod = input.int(8, "MA Period", minval=1)
+breakoutPips = input.float(5, "Breakout Confirmation Pips", minval=0.1, step=0.1)
+maxConsecutiveInsideBars = input.int(3, "Max Consecutive Inside Bars", minval=1)
+horizontalLinePeriod = input.int(10, "Horizontal Line Period", minval=1)
+volMaPeriod = input.int(20, "Volume MA Period", minval=1)
+volumeThreshold = input.float(1.5, "Volume Threshold", minval=1, step=0.1)
+
+// Visualization settings
+hideInsideBars = input.bool(false, "Hide Inside Bars")
+insideBarTransparency = input.int(80, "Inside Bar Transparency", minval=0, maxval=100)
+breakoutColor = input.color(color.green, "Breakout Candle Color")
+breakoutTransparency = input.int(20, "Breakout Candle Transparency", minval=0, maxval=100)
+
+// Function to calculate MA based on type
+calcMA(src, len) =>
+    switch maType
+        "SMA" => ta.sma(src, len)
+        "EMA" => ta.ema(src, len)
+        "SMMA" => ta.sma(src, len)
+        "WMA" => ta.wma(src, len)
+        "VWMA" => ta.vwma(src, len)
+
+hasTrueValue(arr, lookback) =>
+    result = false
+    for i = 0 to math.min(array.size(arr) - 1, lookback - 1)
+        if array.get(arr, i)
+            result := true
+            break
+    result
+
+// Calculate MAs
+timeframe = useAlternateResolution ? str.tostring(timeframe.multiplier * resolutionMultiplier) + timeframe.period : timeframe.period
+closeMA = request.security(syminfo.tickerid, timeframe, calcMA(close, maPeriod))
+openMA = request.security(syminfo.tickerid, timeframe, calcMA(open, maPeriod))
+volMA = request.security(syminfo.tickerid, timeframe, calcMA(volume, volMaPeriod))
+isBreakout = array.new<bool>()
+
+// Inside bar detection with filtering
+var float inside_bar_high = high
+var float inside_bar_low = low
+var int consecutive_inside_bars = 0
+var int last_inside_bar_index = -1
+
+isInsideBar = high <= inside_bar_high and low >= inside_bar_low
+if isInsideBar
+    consecutive_inside_bars := consecutive_inside_bars + 1
+    if consecutive_inside_bars == 1
+        last_inside_bar_index := bar_index
+else
+    inside_bar_high := high
+    inside_bar_low := low
+    consecutive_inside_bars := 0
+
+validInsideBar = isInsideBar and consecutive_inside_bars <= maxConsecutiveInsideBars
+
+// Breakout detection
+longBreakout = high[1] > inside_bar_high + (breakoutPips * syminfo.mintick)
+shortBreakout = ta.crossunder(inside_bar_low, close)
+array.push(isBreakout, shortBreakout)
+
+// Return inside detection
+isReturnInside = hasTrueValue(isBreakout, maxConsecutiveInsideBars) and (high <= inside_bar_high and low >= inside_bar_low)
+
+
+// Trend direction
+isBullishTrend = closeMA > openMA
+plot(closeMA, color=isBullishTrend==false?color.red:color.green, linewidth = 2)
+
+
+// Scenario detection
+//TODO: automate breakouts and fakeouts typical scenarios using AI detection 
+
+
+// Visualization
+insideBarColor = hideInsideBars ? na : color.new(color.gray, insideBarTransparency)
+barcolor(validInsideBar ? insideBarColor :  na)
+
+
+// Plot inside bar high and low lines
+plot(validInsideBar ? inside_bar_high : na, color=color.new(color.green, 50), style=plot.style_linebr, linewidth=2, title="Inside Bar High")
+plot(validInsideBar ? inside_bar_low : na, color=color.new(color.red, 50), style=plot.style_linebr, linewidth=2, title="Inside Bar Low")
+
+// Plot inside bar high and low lines
+var line insideBarHighLine = na
+var line insideBarLowLine = na
+
+// if validInsideBar and bar_index == last_inside_bar_index
+//     line.delete(insideBarHighLine)
+//     line.delete(insideBarLowLine)
+//     insideBarHighLine := line.new(x1=bar_index, y1=inside_bar_high, x2=bar_index + horizontalLinePeriod, y2=inside_bar_high, color=color.green, width=2)
+//     insideBarLowLine := line.new(x1=bar_index, y1=inside_bar_low, x2=bar_index + horizontalLinePeriod, y2=inside_bar_low, color=color.red, width=2)
+if barstate.isconfirmed
+    if validInsideBar and bar_index == last_inside_bar_index
+        line.delete(insideBarHighLine)
+        line.delete(insideBarLowLine)
+        insideBarHighLine := line.new(x1=bar_index, y1=inside_bar_high, x2=bar_index + horizontalLinePeriod, y2=inside_bar_high, color=color.green, width=2)
+        insideBarLowLine := line.new(x1=bar_index, y1=inside_bar_low, x2=bar_index + horizontalLinePeriod, y2=inside_bar_low, color=color.red, width=2)
+
+
+// Alert conditions
+alertcondition(longBreakout, title="Long Breakout", message="Long breakout detected")
+alertcondition(shortBreakout, title="Short Breakout", message="Short breakout detected")
